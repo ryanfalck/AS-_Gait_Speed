@@ -1,0 +1,619 @@
+---
+title: "AS! Gaitspeed Analyses"
+author: "Ryan Stanley Falck"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1) Set-up
+
+```{r}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(boot,MASS,readxl,mediation,psych,plyr,sandwich,ggplot2,lme4,lmerTest,rpart,survival,survminer,lsmeans,fmsb, mice, mitools, tableone)
+
+setwd("~/Desktop/Manuscripts/Ongoing Projects/ActionSeniors! Cognitive Frailty/")
+data<-read_excel("ActionSeniors_CogsSPPB August 24, 2023.xlsx")#Data#
+
+data$exclude<-0
+data$exclude[data$ID==330]<-1
+
+data$Group.1<-NA
+data$Group.1[data$Group==0]<-"Interview"
+data$Group.1[data$Group==1]<-"Otago"
+
+data$Group_r[data$Group==0]<-1
+data$Group_r[data$Group==1]<-0
+
+data$Gender<-NA
+data$Gender[data$Sex==1]<-0
+data$Gender[data$Sex==2]<-1
+
+data$Sex[data$Sex==1]<-"Female"
+data$Sex[data$Sex==2]<-"Male"
+
+#Create long data set
+library(plyr)
+wide<-rename(data,c("Weight_1"="Weightbaseline", "Height_1"="Heightbaseline","BMI_1"="BMIbaseline",
+                    "Falls 12M prior to baseline"="Fallsbeforebaseline", "Total_Exposure"="TotalExposure",
+                    "Total_Falls"="TotalFalls","PPA_1"="PPAbaseline","GDS_1"="GDSbaseline","MoCA_1"="MoCAbaseline",
+                    "Trails_BA_1"="TrailsBAbaseline","DSST_1"="DSSTbaseline","TUG_1"="TUGbaseline",
+                    "SPPB_1"="SPPBbaseline","Gait_Speed_1"="GaitSpeedbaseline", "Digits_F_1"="DigitsFbaseline",
+                    "Digits_B_1"="DigitsBbaseline", "Stroop_3_1"="Stroopbaseline", "Trails_BA_2"="TrailsBA_2",
+                    "Trails_BA_3"="TrailsBA_3","Group_r"="Group.r","Gait_Speed_2"="GaitSpeed_2","Gait_Speed_3"="GaitSpeed_3",
+                    "Total Falls 6 Months"="TotalFalls6Months", "Stroop_3_2"="Stroop_2", "Stroop_3_3"="Stroop_3",
+                    "Digits_F_2"="DigitsF_2","Digits_B_2"="DigitsB_2","Digits_F_3"="DigitsF_3","Digits_B_3"="DigitsB_3"))
+detach("package:plyr", unload = TRUE)
+
+wide$time<-1
+
+wide2<-wide[c(1,64:70,2:18,21,24:29,31:34,37,40:45,47:50,53,56:61,63)]
+data2 <- reshape(as.data.frame(wide2),idvar="ID",varying=c(34:55),direction="long",sep="_")
+
+data2$Stroopbaseline<-as.numeric(data2$Stroopbaseline)
+data2$Stroop<-as.numeric(data2$Stroop)
+data2$TUGbaseline<-as.numeric(data2$TUGbaseline)
+data2$TUG<-as.numeric(data2$TUG)
+data2$timefactor<-as.factor(data2$time)
+
+wide2$Stroopbaseline<-as.numeric(wide2$Stroopbaseline)
+wide2$TUGbaseline<-as.numeric(wide2$TUGbaseline)
+wide2$Stroop_2<-as.numeric(wide2$Stroop_2)
+wide2$Stroop_3<-as.numeric(wide2$Stroop_3)
+```
+
+# 2) Binary variable of slow gait speed
+
+Participants categorized slow (i.e., below mean gait speed of 0.87 m/s) vs. fast gait speed at baseline
+```{r}
+data2$slowgait<-NA
+data2$slowgait[data2$GaitSpeedbaseline<=0.8]<-0
+data2$slowgait[data2$GaitSpeedbaseline>0.8]<-1
+
+wide2$slowgait<-NA
+wide2$slowgait[wide2$GaitSpeedbaseline<=0.8]<-0
+wide2$slowgait[wide2$GaitSpeedbaseline>0.8]<-1
+```
+
+# 3) Figure 1 - CONSORT Flow Chart Stratified by Baseline Gait Speed Status
+
+```{r}
+#Determine CogFrail Status of Dropouts
+CONSORT<- subset(wide2, ID==128 | ID== 131 | ID==132 | ID==134 | ID==158 | ID==163 | ID==176 | ID==185 | ID==192 | ID==195 | ID==213 | ID==214 | ID==216 | ID==220 | ID==222 | ID==223 |
+                   ID==270 | ID==278 | ID==281 | ID==284 | ID==306 | ID==310 | ID==318 | ID==321 | ID==330 | ID==334 | ID==339 | ID==357 | ID==362 | ID==369 | ID==373 | ID==375 | ID==378 |
+                   ID==385 | ID==395 | ID==398 | ID==407 | ID==408 | ID==412 | ID==413 | ID==424 | ID==426 | ID==427 | ID==428 | ID==432 | ID==438 | ID==455 | ID==461) #All dropouts
+
+CONSORT<-CONSORT[c(1,9,56)]
+MONTHS<- c(13,2,1,0,0,0,13,0,0,13,2,4,0,11,3,5,1,5,2,5,0,0,3,0,0,5,0,4,5,5,5,7,6,1,1,9,1,7,9,2,4,1,7,7,5,11,7,10) #Months in study before drop-out
+CONSORT<-cbind(CONSORT,MONTHS) 
+
+CONSORT$Group[CONSORT$Group==1]<-"INT"
+CONSORT$Group[CONSORT$Group==0]<-"CON"
+
+#Dropouts before 6 months (i.e., Month 7) or after 6 months in study
+CONSORT$Timepoint<-NA
+CONSORT$Timepoint[CONSORT$MONTHS<=7]<-"6 Months or Less"
+CONSORT$Timepoint[CONSORT$MONTHS>7]<-"More than 6 Months"
+
+
+#Sort by Group, Gait Speed Status, and Time of Dropout
+table(CONSORT$Timepoint,CONSORT$Group, CONSORT$slowgait)
+```
+
+# 4) Baseline characteristics
+
+Stratified datasets
+```{r}
+fastgait.wide<-subset(wide2, slowgait==1)
+slowgait.wide<-subset(wide2, slowgait==0)
+
+fastgait.long<-subset(data2, slowgait==1)
+slowgait.long<-subset(data2, slowgait==0)
+```
+
+Baseline variables
+```{r}
+baseline<-dput(names(wide2[c(11,10,14,15,16,21:23,20,31,32,33,24,25,30,26,27)]))
+```
+
+## 4.1) All participants
+
+```{r}
+Table1_full<-CreateTableOne(vars=baseline, strata="Group", data=wide2)
+print(Table1_full,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+## 4.2) Participants stratified by gait speed classification
+```{r}
+Table1_full<-CreateTableOne(vars=baseline, strata="slowgait", data=wide2)
+print(Table1_full,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+# 4.3) Slow gait only
+
+```{r}
+Table1_slow<-CreateTableOne(vars=baseline, strata="Group", data=slowgait.wide)
+print(Table1_slow,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+# 4.4) Fast gait only
+
+```{r}
+Table1_fast<-CreateTableOne(vars=baseline, strata="Group", data=fastgait.wide)
+print(Table1_fast,contDigits=2,missing=TRUE,quote=TRUE)
+```
+
+
+# 5) Primary outcome models from JAMA paper (Liu-Ambrose et al., 2019)
+
+Falls risk over 12 months
+```{r}
+mdl.nb<-glm.nb(TotalFalls~Group.1+scale(Gender,scale=FALSE)+offset(log(TotalExposure/365)),subset(data2,exclude==0)) 
+print(summary(mdl.nb))
+SE<-sqrt(diag(vcovHC(mdl.nb,"HC1")))
+p=2*pnorm(-abs(coef(mdl.nb)/SE))
+print(cbind(coef(mdl.nb),SE,p))
+est<-cbind(Estimate=coef(mdl.nb),LL=coef(mdl.nb)-1.96*SE,UL=coef(mdl.nb)+1.96*SE)
+exp_group<-exp(est)
+print("Use these estimates and LL and UL for the 95% CI");exp_group
+print("Significant effect of intervention on falls risk at 12 months for participants with CogFrailty")  
+```
+
+Falls risk over 6 months
+```{r}
+mdl2.nb<-glm.nb(TotalFalls6Months~Group.1+scale(Gender,scale=FALSE)+offset(log(TotalExposure/182.5)),subset(data2,exclude==0)) 
+print(summary(mdl2.nb))
+SE<-sqrt(diag(vcovHC(mdl2.nb,"HC1")))
+p=2*pnorm(-abs(coef(mdl2.nb)/SE))
+print(cbind(coef(mdl2.nb),SE,p))
+est<-cbind(Estimate=coef(mdl2.nb),LL=coef(mdl2.nb)-1.96*SE,UL=coef(mdl2.nb)+1.96*SE)
+exp_group<-exp(est)
+print("Use these estimates and LL and UL for the 95% CI");exp_group
+print("Significant effect of intervention on falls risk at 6 months for participants with CogFrailty")    
+```
+
+
+# 6) Effects of the intervention for slow vs. fast gait speed
+
+## 6.1) Interaction effects
+
+Falls over 12 months
+```{r}
+mdl.nb<-glm.nb(TotalFalls~Group.1*slowgait+scale(Gender,scale=FALSE)+offset(log(TotalExposure/365)),subset(wide2,exclude==0)) 
+print(summary(mdl.nb))
+SE<-sqrt(diag(vcovHC(mdl.nb,"HC1")))
+p=2*pnorm(-abs(coef(mdl.nb)/SE))
+print(cbind(coef(mdl.nb),SE,p))
+est<-cbind(Estimate=coef(mdl.nb),LL=coef(mdl.nb)-1.96*SE,UL=coef(mdl.nb)+1.96*SE)
+exp_group<-exp(est)
+print("Use these estimates and LL and UL for the 95% CI");exp_group
+```
+
+Falls over 6 months
+```{r}
+mdl.nb<-glm.nb(TotalFalls6Months~Group.1*slowgait+scale(Gender,scale=FALSE)+offset(log(TotalExposure/365)),subset(wide2,exclude==0)) 
+print(summary(mdl.nb))
+SE<-sqrt(diag(vcovHC(mdl.nb,"HC1")))
+p=2*pnorm(-abs(coef(mdl.nb)/SE))
+print(cbind(coef(mdl.nb),SE,p))
+est<-cbind(Estimate=coef(mdl.nb),LL=coef(mdl.nb)-1.96*SE,UL=coef(mdl.nb)+1.96*SE)
+exp_group<-exp(est)
+print("Use these estimates and LL and UL for the 95% CI");exp_group
+```
+
+## 6.2) Fast gait only
+
+Falls over 12 months
+```{r}
+mdl.nb<-glm.nb(TotalFalls~Group.1+scale(Gender,scale=FALSE)+offset(log(TotalExposure/365)),subset(fastgait.wide,exclude==0)) 
+print(summary(mdl.nb))
+SE<-sqrt(diag(vcovHC(mdl.nb,"HC1")))
+p=2*pnorm(-abs(coef(mdl.nb)/SE))
+print(cbind(coef(mdl.nb),SE,p))
+est<-cbind(Estimate=coef(mdl.nb),LL=coef(mdl.nb)-1.96*SE,UL=coef(mdl.nb)+1.96*SE)
+exp_group<-exp(est)
+print("Use these estimates and LL and UL for the 95% CI");exp_group
+```
+
+Falls over 6 months
+```{r}
+mdl.nb<-glm.nb(TotalFalls6Months~Group.1+scale(Gender,scale=FALSE)+offset(log(TotalExposure/365)),subset(fastgait.wide,exclude==0)) 
+print(summary(mdl.nb))
+SE<-sqrt(diag(vcovHC(mdl.nb,"HC1")))
+p=2*pnorm(-abs(coef(mdl.nb)/SE))
+print(cbind(coef(mdl.nb),SE,p))
+est<-cbind(Estimate=coef(mdl.nb),LL=coef(mdl.nb)-1.96*SE,UL=coef(mdl.nb)+1.96*SE)
+exp_group<-exp(est)
+print("Use these estimates and LL and UL for the 95% CI");exp_group
+```
+
+
+## 6.3) Slow gait only
+
+Falls over 12 months
+```{r}
+mdl.nb<-glm.nb(TotalFalls~Group.1+scale(Gender,scale=FALSE)+offset(log(TotalExposure/365)),subset(slowgait.wide,exclude==0)) 
+print(summary(mdl.nb))
+SE<-sqrt(diag(vcovHC(mdl.nb,"HC1")))
+p=2*pnorm(-abs(coef(mdl.nb)/SE))
+print(cbind(coef(mdl.nb),SE,p))
+est<-cbind(Estimate=coef(mdl.nb),LL=coef(mdl.nb)-1.96*SE,UL=coef(mdl.nb)+1.96*SE)
+exp_group<-exp(est)
+print("Use these estimates and LL and UL for the 95% CI");exp_group
+```
+
+Falls over 6 months
+```{r}
+mdl.nb<-glm.nb(TotalFalls6Months~Group.1+scale(Gender,scale=FALSE)+offset(log(TotalExposure/365)),subset(slowgait.wide,exclude==0)) 
+print(summary(mdl.nb))
+SE<-sqrt(diag(vcovHC(mdl.nb,"HC1")))
+p=2*pnorm(-abs(coef(mdl.nb)/SE))
+print(cbind(coef(mdl.nb),SE,p))
+est<-cbind(Estimate=coef(mdl.nb),LL=coef(mdl.nb)-1.96*SE,UL=coef(mdl.nb)+1.96*SE)
+exp_group<-exp(est)
+print("Use these estimates and LL and UL for the 95% CI");exp_group
+```
+
+
+## 6.4) Post-hoc contrasts
+
+Fast vs. Slow at 12 months
+```{r}
+z=(-0.40 - (-0.46))/(sqrt((0.21)^2 + (0.25)^2))
+p=2*pnorm(-abs(z))
+
+z
+p
+```
+
+Fast vs. Slow at 6 months
+```{r}
+z=(-0.13 - (-0.57))/(sqrt((0.23)^2 + (0.27)^2))
+p=2*pnorm(-abs(z))
+
+z
+p
+```
+
+## 6.5) Cumulative Falls by Intervention Group and Gait Speed
+
+Set-up for cumulative falls
+```{r}
+setwd("~/Desktop/Manuscripts/Ongoing Projects/ActionSeniors! Cognitive Frailty/")
+Monthly_falls <- read_excel("AS_Monthly falls_Mar 20 2019.xlsx")
+Monthly_falls<-subset(Monthly_falls, ID %in% wide2$ID)
+
+data1c<-cbind(Monthly_falls,wide2$slowgait,wide2$Group)
+data1c<-subset(data1c,ID!=330)
+
+data1c<-plyr::rename(data1c,c("Month_1_Cumulative"="MonthCumulative_1","Month_2_Cumulative"="MonthCumulative_2","Month_3_Cumulative"="MonthCumulative_3",
+                              "Month_4_Cumulative"="MonthCumulative_4","Month_5_Cumulative"="MonthCumulative_5","Month_6_Cumulative"="MonthCumulative_6",
+                              "Month_7_Cumulative"="MonthCumulative_7","Month_8_Cumulative"="MonthCumulative_8","Month_9_Cumulative"="MonthCumulative_9",
+                              "Month_10_Cumulative"="MonthCumulative_10","Month_11_Cumulative"="MonthCumulative_11","Month_12_Cumulative"="MonthCumulative_12",
+                              "Month_13_Cumulative"="MonthCumulative_13","wide2$slowgait"="slowgait","wide2$Group"="Group"))
+data1c_normalgait_EX<-subset(data1c,Group==1 & slowgait==1)
+data1c_normalgait_UC<-subset(data1c,Group==0 & slowgait==1)
+data1c_slowgait_EX<-subset(data1c,Group==1 & slowgait==0)
+data1c_slowgait_UC<-subset(data1c,Group==0 & slowgait==0)
+
+print("Normal Gait, Exercise");apply(data1c_normalgait_EX[c(2:14)], 2, function(x) length(which(!is.na(x)))) #count people with falls data
+print("Normal Gait, Usual Care");apply(data1c_normalgait_UC[c(2:14)], 2, function(x) length(which(!is.na(x)))) #count people with falls data
+print("Slow Gait, Exercise");apply(data1c_slowgait_EX[c(2:14)], 2, function(x) length(which(!is.na(x)))) #count people with falls data
+print("Slow Gait, Usual Care");apply(data1c_slowgait_UC[c(2:14)], 2, function(x) length(which(!is.na(x)))) #count people with falls data
+
+data1c.stacked<-reshape(data1c,idvar="ID",varying=c(2:27),direction="long",sep="_")
+data1c.stacked$time<-data1c.stacked$time-1
+
+Fallsmeans<-data.frame(aggregate(MonthCumulative~Group*slowgait+time,data1c.stacked,sum))
+subset(Fallsmeans, slowgait==0)
+```
+
+Figure for accumulation of falls by treatment group for participants with slow gait speed
+
+```{r}
+Fallsmeans$SlowgaitGroup<-NA
+Fallsmeans$SlowgaitGroup[Fallsmeans$Group==0 & Fallsmeans$slowgait==0]<-"Usual Care with Slow Gait Speed"
+Fallsmeans$SlowgaitGroup[Fallsmeans$Group==1 & Fallsmeans$slowgait==0]<-"Exercise with Slow Gait Speed"
+Fallsmeans$SlowgaitGroup[Fallsmeans$Group==0 & Fallsmeans$slowgait==1]<-"Usual Care with Normal Gait Speed"
+Fallsmeans$SlowgaitGroup[Fallsmeans$Group==1 & Fallsmeans$slowgait==1]<-"Exercise with Normal Gait Speed"
+
+Fallsmeans.cogfrail<-subset(Fallsmeans)
+
+Cumulativefalls.Graph<- Fallsmeans.cogfrail %>%
+  ggplot() + geom_line(aes(x=time, y=MonthCumulative, color=SlowgaitGroup)) +
+  labs(x="Months", y="Cumulative number of falls") + labs(color="Intervention Group") +
+  scale_x_continuous(breaks=seq(0,13,by=1)) + scale_y_continuous(breaks=seq(0,300,by=50))+
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                     panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+Cumulativefalls.Graph
+```
+
+
+## 6.6) Estimated differences in falls per person-year at 12 months
+
+```{r}
+wide2$falls_ppy<-wide2$TotalFalls/(wide2$TotalExposure/365)
+
+fallsppy_lm<-lm(falls_ppy~Group*slowgait + scale(Gender,scale=FALSE),  subset(wide2, exclude==0))
+anova(fallsppy_lm)
+lsmeans(fallsppy_lm, ~Group|slowgait)
+contrast(lsmeans(fallsppy_lm, ~~Group|slowgait), "trt.vs.ctrl", adj="none")
+```
+
+## 6.6.1) Post-hoc
+
+Matrix
+```{r}
+#EX vs. usual care differences at 6 months between slow gait and normal gait
+contrast1 = matrix(c(-1,1,0,0))
+contrast2 = matrix(c(0,0,-1,1))
+contrast_result = contrast1 - contrast2
+```
+
+Post-hoc contrasts
+```{r}
+contrast(lsmeans(fallsppy_lm, ~~Group|slowgait),list(contrast_result),by=NULL)
+```
+
+## 6.7) Estimated differences in falls per person-year at 6 months
+
+```{r}
+wide2$falls_ppy_6mnths<-wide2$TotalFalls6Months/(wide2$TotalExposure/182.5)
+
+fallsppy_6mnths_lm<-lm(falls_ppy_6mnths~Group*slowgait + scale(Gender,scale=FALSE),  subset(wide2, exclude==0))
+anova(fallsppy_6mnths_lm)
+lsmeans(fallsppy_6mnths_lm, ~Group|slowgait)
+contrast(lsmeans(fallsppy_6mnths_lm, ~~Group|slowgait), "trt.vs.ctrl", adj="none")
+```
+
+### 6.7.1) Post-hoc
+
+Post-hoc contrasts
+```{r}
+contrast(lsmeans(fallsppy_6mnths_lm, ~~Group|slowgait),list(contrast_result),by=NULL)
+```
+
+## 6.8) Differences in exposure time
+
+```{r}
+expopsure_lm<-lm(TotalExposure~Group*slowgait,  subset(wide2, exclude==0))
+anova(expopsure_lm)
+lsmeans(expopsure_lm, ~Group|slowgait)
+contrast(lsmeans(expopsure_lm, ~~Group|slowgait), "trt.vs.ctrl", adj="none")
+```
+
+
+
+# 7) Effects of the intervention on gait speed
+
+Main effects
+```{r}
+Gaitspeed_lm<-lmer(GaitSpeed~Group.1*timefactor + Gender + GaitSpeedbaseline + (1|ID),  subset(data2, exclude==0))
+anova(Gaitspeed_lm)
+lsmeans(Gaitspeed_lm, ~Group.1|timefactor)
+contrast(lsmeans(Gaitspeed_lm, ~Group.1|timefactor), "trt.vs.ctrl", adj="none")
+confint(contrast(lsmeans(Gaitspeed_lm, ~Group.1|timefactor), "trt.vs.ctrl", adj="none"))
+```
+
+
+Differences in effects for fast vs.slow gait speed
+```{r}
+Gaitspeed_lm_mod<-lmer(GaitSpeed~Group.1*timefactor*slowgait + Gender + GaitSpeedbaseline + (1|ID),  subset(data2, exclude==0))
+anova(Gaitspeed_lm_mod)
+lsmeans(Gaitspeed_lm_mod, ~Group.1|timefactor|slowgait)
+contrast(lsmeans(Gaitspeed_lm_mod, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none")
+confint(contrast(lsmeans(Gaitspeed_lm_mod, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none"))
+```
+
+
+# 8) Does baseline gait speed modify intervention effects on secondary outcomes?
+
+Posthoc Contrast Statements
+```{r}
+#EX vs. usual care differences at 6 months between slow gait and normal gait
+c1 = matrix(c(0,1,0,0,0,-1,0,0))
+c2 = matrix(c(1,0,0,0,-1,0,0,0))
+c1st = c1 - c2
+
+#EX vs. usual care differences at 12 months between slow gait and normal gait
+c3 = matrix(c(0,0,0,1,0,0,0,-1))
+c4 = matrix(c(0,0,1,0,0,0,-1,0))
+c2nd = c3 - c4
+```
+
+## 8.1) SPPB
+```{r}
+SPPB_lm<-lmer(SPPB~Group.1*timefactor*slowgait + Gender + SPPBbaseline + (1|ID),  subset(data2, exclude==0))
+anova(SPPB_lm)
+lsmeans(SPPB_lm, ~Group.1|timefactor|slowgait)
+contrast(lsmeans(SPPB_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none")
+confint(contrast(lsmeans(SPPB_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none"))
+```
+
+## 8.2) PPA
+```{r}
+PPA_lm<-lmer(PPA~Group.1*timefactor*slowgait + Gender + PPAbaseline + (1|ID),  subset(data2, exclude==0))
+anova(PPA_lm)
+lsmeans(PPA_lm, ~Group.1|timefactor|slowgait)
+contrast(lsmeans(PPA_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none")
+confint(contrast(lsmeans(PPA_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none"))
+```
+
+## 8.3) TUG
+```{r}
+TUG_lm<-lmer(TUG~Group.1*timefactor*slowgait + Gender + TUGbaseline + (1|ID),  subset(data2, exclude==0))
+anova(TUG_lm)
+lsmeans(TUG_lm, ~Group.1|timefactor|slowgait)
+contrast(lsmeans(TUG_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none")
+confint(contrast(lsmeans(TUG_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none"))
+```
+
+Post-hoc contrasts
+```{r}
+contrast(lsmeans(TUG_lm, ~Group.1|timefactor|slowgait),list(c1st,c2nd),by=NULL)
+```
+
+## 8.4) MoCA
+```{r}
+MoCA_lm<-lmer(MoCA~Group.1*timefactor*slowgait + Gender + MoCAbaseline + (1|ID),  subset(data2, exclude==0))
+anova(MoCA_lm)
+lsmeans(MoCA_lm, ~Group.1|timefactor|slowgait)
+contrast(lsmeans(MoCA_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none")
+confint(contrast(lsmeans(MoCA_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none"))
+```
+
+## 8.5) DSST
+```{r}
+DSST_lm<-lmer(DSST~Group.1*timefactor*slowgait + Gender + DSSTbaseline + (1|ID),  subset(data2, exclude==0))
+anova(DSST_lm)
+lsmeans(DSST_lm, ~Group.1|timefactor|slowgait)
+contrast(lsmeans(DSST_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none")
+confint(contrast(lsmeans(DSST_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none"))
+```
+
+```{r}
+contrast(lsmeans(DSST_lm, ~Group.1|timefactor|slowgait),list(c1st,c2nd),by=NULL)
+```
+
+## 8.6) Trails
+```{r}
+Trails_lm<-lmer(TrailsBA~Group.1*timefactor*slowgait + Gender + TrailsBAbaseline + (1|ID),  subset(data2, exclude==0))
+anova(Trails_lm)
+lsmeans(Trails_lm, ~Group.1|timefactor|slowgait)
+contrast(lsmeans(Trails_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none")
+confint(contrast(lsmeans(Trails_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none"))
+```
+
+## 8.7) Stroop
+```{r}
+Stroop_lm<-lmer(Stroop~Group.1*timefactor*slowgait + Gender + Stroopbaseline + (1|ID),  subset(data2, exclude==0))
+anova(Stroop_lm)
+lsmeans(Stroop_lm, ~Group.1|timefactor|slowgait)
+contrast(lsmeans(Stroop_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none")
+confint(contrast(lsmeans(Stroop_lm, ~Group.1|timefactor|slowgait), "trt.vs.ctrl", adj="none"))
+```
+
+
+# 9) Compliance data
+
+## 9.1) Compliance data set-up
+```{r}
+setwd("~/Desktop/Manuscripts/Ongoing Projects/ActionSeniors! Cognitive Frailty/")
+compliancedata<-read_excel("AS_compliance_August 24, 2023.xlsx") #Data#
+library(plyr)
+compliancedata2<-rename(compliancedata, c("Month 1"="OEPCOMP_1","Month 2"="OEPCOMP_2","Month 3"="OEPCOMP_3","Month 4"="OEPCOMP_4","Month 5"="OEPCOMP_5","Month 6"="OEPCOMP_6",
+                                          "Month 7"="OEPCOMP_7","Month 8"="OEPCOMP_8","Month 9"="OEPCOMP_9","Month 10"="OEPCOMP_10","Month 11"="OEPCOMP_11","Month 12"="OEPCOMP_12"))
+detach("package:plyr", unload = TRUE)
+
+#Maximize compliance at 100% for each individual month
+compliancedata2$OEPCOMP_1[compliancedata2$OEPCOMP_1>100]<-100
+compliancedata2$OEPCOMP_2[compliancedata2$OEPCOMP_2>100]<-100
+compliancedata2$OEPCOMP_3[compliancedata2$OEPCOMP_3>100]<-100
+compliancedata2$OEPCOMP_4[compliancedata2$OEPCOMP_4>100]<-100
+compliancedata2$OEPCOMP_5[compliancedata2$OEPCOMP_5>100]<-100
+compliancedata2$OEPCOMP_6[compliancedata2$OEPCOMP_6>100]<-100
+compliancedata2$OEPCOMP_7[compliancedata2$OEPCOMP_7>100]<-100
+compliancedata2$OEPCOMP_8[compliancedata2$OEPCOMP_8>100]<-100
+compliancedata2$OEPCOMP_9[compliancedata2$OEPCOMP_9>100]<-100
+compliancedata2$OEPCOMP_10[compliancedata2$OEPCOMP_10>100]<-100
+compliancedata2$OEPCOMP_11[compliancedata2$OEPCOMP_11>100]<-100
+compliancedata2$OEPCOMP_12[compliancedata2$OEPCOMP_12>100]<-100
+
+
+compliancedata2$AverageComply<-(compliancedata2[c(2)] + compliancedata2[c(3)] + compliancedata2[c(4)] + compliancedata2[c(5)] + compliancedata2[c(6)] + compliancedata2[c(7)] + 
+                                  compliancedata2[c(8)] + compliancedata2[c(9)] + compliancedata2[c(10)] + compliancedata2[c(11)] + compliancedata2[c(12)] + compliancedata2[c(13)])/12
+
+wide3<- merge(compliancedata2,wide2, by = "ID")
+wide3$slowgait[wide3$slowgait==1]<-"Normal Gait Speed"
+wide3$slowgait[wide3$slowgait==0]<-"Slow Gait Speed"
+
+complygraph<-wide3[c(1:13,69)]
+
+#long form
+compliancelong <- reshape(as.data.frame(complygraph),idvar="ID",varying=c(2:13),direction="long",sep="_")
+
+#Maximize compliance at 100% (i.e., compliance cannot be greater than 100%, regardless of how many times/month OEP was completed)
+compliancelong$OEPCOMP[compliancelong$OEPCOMP>100]<-100
+
+
+compliancelong$Timepoint<-as.factor(compliancelong$time)
+```
+
+## 9.2) Average compliance by gait speed
+```{r}
+
+describeBy(wide3$AverageComply, wide3$slowgait)
+```
+
+## 9.3) Compliance data by month
+```{r}
+comply.2<-lm(OEPCOMP~factor(time)*slowgait, compliancelong)
+emms.2<-as.data.frame(lsmeans(comply.2, ~factor(time)|slowgait))
+print(emms.2)
+```
+
+## 9.4) Compliance data graph
+```{r}
+Compliance.Graph<- ggplot(emms.2, aes(x=time, y=lsmean, group = slowgait)) + geom_line(aes(linetype= slowgait)) +
+  labs(x="Months", y="Monthy Adherence %") + ylim(0,100) + scale_x_continuous(breaks=seq(0,13,by=2)) +
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+                     panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+Compliance.Graph
+```
+
+
+# 10) Additional Analyses for Response to Reviewers
+
+
+## 10.1) Comparing attrition rates between groups
+
+Set-up data frame comparing attrition rates between groups
+```{r}
+Attrition<-wide2[c(1,5,56)]
+
+library(dplyr)
+Attrition2 <- Attrition %>%
+  mutate(Dropouts = ifelse(ID==128 | ID== 131 | ID==132 | ID==134 | ID==158 | ID==163 | ID==176 | ID==185 | ID==192 | ID==195 |
+                                ID==213 | ID==214 | ID==216 | ID==220 | ID==222 | ID==223 | ID==270 | ID==278 | ID==281 | ID==284 |
+                                ID==306 | ID==310 | ID==318 | ID==321 | ID==330 | ID==334 | ID==339 | ID==357 | ID==362 | ID==369 |
+                                ID==373 | ID==375 | ID==378 | ID==385 | ID==395 | ID==398 | ID==407 | ID==408 | ID==412 | ID==413 |
+                                ID==424 | ID==426 | ID==427 | ID==428 | ID==432 | ID==438 | ID==455 | ID==461, "Dropout","Completed"),
+         Dropout_6 = ifelse(Dropouts=="Dropout" & (ID== 131 | ID==132 | ID==134 | ID==158 | ID==163 | ID==185 | ID==192 | ID==213 |
+                                                       ID==214 | ID==216 | ID==222 | ID==223 | ID==270 | ID==278 | ID==281 | ID==284 |
+                                ID==306 | ID==310 | ID==318 | ID==321 | ID==330 | ID==334 | ID==339 | ID==357 | ID==362 | ID==369 |
+                                ID==373 | ID==375 | ID==378 | ID==385 | ID==395 | ID==407 | ID==408 | ID==413 | ID==424 | ID==426 | 
+                                  ID==427 | ID==428 | ID==432 | ID==455), 1, NA),
+         Dropout_12 = ifelse(Dropouts=="Dropout" & (ID==128 | ID==176 | ID==195 | ID==220 | ID==398 | ID==412 | ID==438 | ID==461), 1, NA)
+           )
+```
+
+
+```{r}
+table(Attrition2$Group.1, Attrition2$Dropouts, Attrition2$slowgait)
+
+table_data <- xtabs(~ Group.1 + Dropouts + slowgait, data = Attrition2)
+
+mantelhaen.test(table_data)
+```
+
+
+## 10.2) Simplified Poisson regression for fall rates based on gait speed categorization
+
+```{r}
+# Fit the model without interaction (null model)
+null_model <- glm(TotalFalls ~ Group + slowgait + Gender, data = wide2, family = poisson)
+
+
+# Fit the model with interaction (full model)
+full_model <- glm(TotalFalls ~ Group * slowgait + Gender, data = wide2, family = poisson)
+
+# Perform the likelihood ratio test
+lrt_result <- anova(null_model, full_model, test = "LRT")
+print(lrt_result)
+```
